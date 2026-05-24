@@ -50,34 +50,34 @@ pipeline {
                 }
             }
         }
-        // stage ('sonarqube analaysis') {
-        //     steps {
-        //         withSonarQubeEnv('sonarqube-instance') {
+        stage ('sonarqube analaysis') {
+            steps {
+                withSonarQubeEnv('sonarqube-instance') {
 
-        //             script {
+                    script {
 
-        //                 def scannerHome = tool name:'sonar-8'
-        //                 sh """
-        //                     echo "performing sonarqube analysis"
-        //                     ${scannerHome}/bin/sonar-scanner
+                        def scannerHome = tool name:'sonar-8'
+                        sh """
+                            echo "performing sonarqube analysis"
+                            ${scannerHome}/bin/sonar-scanner
 
-        //                 """
-        //             }
-        //         }
-        //     }
-        // }
-        // stage ('qualitygate analysis') {
-        //     steps {
-        //         script {
-        //             timeout(time:5, unit:"MINUTES") {
-        //                 waitForQualityGate abortPipeline: true
+                        """
+                    }
+                }
+            }
+        }
+        stage ('qualitygate analysis') {
+            steps {
+                script {
+                    timeout(time:5, unit:"MINUTES") {
+                        waitForQualityGate abortPipeline: true
 
-        //             }
+                    }
 
-        //         }
+                }
 
-        //     }
-        // }
+            }
+        }
         stage('Dependabot Security Check') {
             steps {
                 withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
@@ -143,19 +143,76 @@ pipeline {
         stage ('build artifact/image') {
             steps {
                 script {
-                    withAWS(credentials: 'aws-creds', region: "${env.awsRegion}"){
+                    // No need to add with aws credentials for building the image
+                    // withAWS(credentials: 'aws-creds', region: "${env.awsRegion}"){
                     sh """
-                        aws ecr get-login-password --region ${env.awsRegion} | docker login --username AWS --password-stdin ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com
+                        # aws ecr get-login-password --region ${env.awsRegion} | docker login --username AWS --password-stdin ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com
 
                         docker build -t ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion} .
 
-                        docker push ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion} 
-
                     """
+                    // }
+                }
+            }
+        }
+        stage ('Trivy OS Scan') {
+            steps {
+                script {
+                    def scanResult = sh (
+                        script: """
+                            trivy image \
+                                --scanners vuln \
+                                --pkg-types os \
+                                --severity HIGH,MEDIUM \
+                                --format table \
+                                --exit-code 1 \
+                                --quiet \
+                                ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/catalogue:${appVersion}
+
+                        """,
+                        returnStatus: true
+                    )
+                    if (scanResult != 0) {
+                        error "🚨 Trivy found HIGH/MEDIUM misconfigurations in Dockerfile. Pipeline failed."
+                        } else {
+                        echo "✅ No HIGH or MEDIUM Dockerfile misconfigurations found. Pipeline continues."
                     }
                 }
             }
+        }
+        stage ('Trivy Docker File Scan') {
+            steps {
+                script {
+                    def scanResult = sh (
+                        script: """
+                                trivy config \
+                            --severity HIGH,MEDIUM \
+                            --exit-code 1 \
+                            --format table \
+                            Dockerfile
+                        """,
+                        returnStatus: true
+                    )
+                    if (scanResult != 0) {
+                        error "🚨 Trivy found HIGH/MEDIUM misconfigurations in Dockerfile. Pipeline failed."
+                        } else {
+                        echo "✅ No HIGH or MEDIUM Dockerfile misconfigurations found. Pipeline continues."
+                    }
+                }
+            }
+        }
+        stage ('push to ECR') {
+            steps {
+                script {
+                    withAWS(credentials: 'aws-creds', region: "${env.awsRegion}") {
+                        sh """
+                            aws ecr get-login-password --region ${env.awsRegion} | docker login --username AWS --password-stdin ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com
 
+                            docker push ${env.awsAccId}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion}
+                        """
+                    }
+                }
+            }
         }
     }
     post {
