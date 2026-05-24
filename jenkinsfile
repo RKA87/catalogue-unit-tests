@@ -81,6 +81,8 @@ pipeline {
         stage ('build artifact/image') {
             steps {
                 script {
+                    withAWS(credentials: 'aws-creds', region: "${env.awsRegion}"){
+
                     sh """
                         aws ecr get-login-password --region ${env.awsRegion} | docker login --username AWS --password-stdin ${env.awsAccID}.dkr.ecr.${env.awsRegion}.amazonaws.com
 
@@ -89,6 +91,7 @@ pipeline {
                         docker push ${env.awsAccID}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion} 
 
                     """
+                    }
                 }
             }
 
