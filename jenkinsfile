@@ -1,0 +1,108 @@
+pipeline {
+    agent {
+        node {
+            label 'roboshop'
+        }
+    }
+    environment {
+        awsAccId = "381491827632"
+        awsRegion = "us-east-1"
+        appName = ""
+        appVersion = ""
+    }
+    options {
+        // disableConcurrentBuilds()
+        timeout(time:10, unit:"MINUTES")
+    }
+    stages {
+        stage ('ReadApp Version') {
+            steps {
+                script {
+
+                    def data = readJSON file: 'package.json'
+
+                    appName = data.name
+                    appVersion = data.version
+
+                    echo "Application Name: ${appName} Version: ${appVersion}"
+
+                    echo "Application hosting in AWS Account ${env.awsAccId} in ${env.awsRegion} region"
+                }
+            }
+        }
+        stage ('Install Depedencies') {
+            steps {
+                script {
+                    sh """
+                    echo "npm instllation follows"
+                    npm install
+                    """
+                }
+            }
+        }
+        stage ('Run Unit Tests Using Jest') {
+            steps {
+                script {
+                    sh """
+                        npm test
+
+                    """
+                }
+            }
+        }
+        stage ('sonarqube analaysis') {
+            steps {
+                withSonarQubeEnv('sonarqube-instance') {
+
+                    script {
+
+                        def scannerHome = tool name:'sonar-8'
+                        sh """
+                            echo "performing sonarqube analysis"
+                            ${scannerHome}/bin/sonar-scanner
+
+                        """
+                    }
+                }
+            }
+        }
+        stage ('qualitygate analysis') {
+            steps {
+                script {
+                    timeout(time:5, unit:"MINUTES") {
+                        waitForQualityGate abortPipeline: true
+
+                    }
+
+                }
+
+            }
+        }
+        stage ('build artifact/image') {
+            steps {
+                script {
+                    sh """
+                        aws ecr get-login-password --region ${env.awsRegion} | docker login --username AWS --password-stdin ${env.awsAccID}.dkr.ecr.${env.awsRegion}.amazonaws.com
+
+                        docker build -t ${env.awsAccID}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion} .
+
+                        docker push ${env.awsAccID}.dkr.ecr.${env.awsRegion}.amazonaws.com/roboshop/${appName}:${appVersion} 
+
+                    """
+                }
+            }
+
+        }
+    }
+    post {
+        always {
+            echo "post final checks"
+        }
+        success {
+            echo "pipeline success"
+        }
+        failure {
+            echo "pipeline failure"
+        }
+    }
+}
