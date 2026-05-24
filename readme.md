@@ -1,0 +1,1 @@
+This repo is for using Catalogue Microservice Unit Tests to be perform from Jenkins Pipeline
